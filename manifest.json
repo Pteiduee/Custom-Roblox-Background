@@ -1,0 +1,16 @@
+{
+  "name": "Custom Roblox Background",
+  "description": "With this you can change Roblox Background",
+  "version": "2.0",
+  "manifest_version": 3,
+  "icons": {
+    "128": "gay.jpg"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.roblox.com/my/avatar"],
+      "js": ["dkouggh.js"],
+      "run_at": "document_start"
+    }
+  ]
+}
