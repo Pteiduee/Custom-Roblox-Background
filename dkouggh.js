@@ -150,7 +150,7 @@ if (site.includes("https://www.roblox.com/my/avatar")) {
         };
         reader.readAsDataURL(file);
       } else {
-        alert("Please select an image file!");
+        alert("need to select an image file or GIF!");
       }
     });
 
