@@ -237,6 +237,11 @@ if (site.includes("https://www.roblox.com/my/avatar") || site.includes("https://
     saveButton.textContent = "Save New Background";
     saveButton.className = "custom-button";
 
+    const linkButton = document.createElement("button");
+    linkButton.id = "useLinkButton";
+    linkButton.textContent = "Use Link (URL)";
+    linkButton.className = "custom-button";
+
     const hideButton = document.createElement("button");
     hideButton.id = "hideAvatarButton";
     hideButton.textContent = "Hide Avatar";
@@ -251,6 +256,7 @@ if (site.includes("https://www.roblox.com/my/avatar") || site.includes("https://
     container.appendChild(label);
     container.appendChild(fileInput);
     container.appendChild(saveButton);
+    container.appendChild(linkButton);
     container.appendChild(hideButton);
     container.appendChild(deleteButton); // إضافة الزر الجديد
     document.body.appendChild(container);
@@ -300,6 +306,41 @@ if (site.includes("https://www.roblox.com/my/avatar") || site.includes("https://
         reader.readAsDataURL(file);
       } else {
         alert("need to select an image file, GIF, or video!");
+      }
+    });
+
+    // زر الإدخال من الرابط
+    linkButton.addEventListener("click", async () => {
+      const input = prompt("Enter direct image/GIF/video URL:");
+      if (!input) return;
+      const trimmed = input.trim();
+      try {
+        const u = new URL(trimmed);
+        if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+          alert('Please enter a valid http(s) URL.');
+          return;
+        }
+      } catch {
+        alert('Invalid URL.');
+        return;
+      }
+      const lower = trimmed.toLowerCase();
+      const videoExts = [".mp4", ".webm", ".ogg", ".ogv"];
+      const isVideo = videoExts.some(ext => lower.endsWith(ext));
+
+      // إزالة أي خلفية سابقة
+      clearBackgroundElements();
+      if (await storageGet("background")) await storageRemove("background");
+      if (await storageGet("backgroundType")) await storageRemove("backgroundType");
+
+      if (isVideo) {
+        applyVideoBackground(trimmed);
+        await storageSet("background", trimmed);
+        await storageSet("backgroundType", "video");
+      } else {
+        applyImageBackground(trimmed);
+        await storageSet("background", trimmed);
+        await storageSet("backgroundType", "image");
       }
     });
 
