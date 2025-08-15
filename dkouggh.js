@@ -1,17 +1,58 @@
 const site = window.location.href;
 if (site.includes("https://www.roblox.com/my/avatar")) {
-  window.addEventListener('DOMContentLoaded', () => {
-    // إذا كانت الخلفية محفوظة في localStorage، قم بتعيينها عند تحميل الصفحة
-    if (localStorage.getItem("background")) {
+  window.addEventListener('DOMContentLoaded', async () => {
+    // helpers for storage and DOM
+    const hasChromeStorage = typeof chrome !== "undefined" && chrome.storage && chrome.storage.local;
+    const storageGet = (key) => new Promise((resolve) => {
+      if (!hasChromeStorage) {
+        resolve(localStorage.getItem(key));
+      } else {
+        chrome.storage.local.get([key], (res) => resolve(res[key] ?? null));
+      }
+    });
+    const storageSet = (key, value) => new Promise((resolve) => {
+      if (!hasChromeStorage) {
+        localStorage.setItem(key, value);
+        resolve();
+      } else {
+        chrome.storage.local.set({ [key]: value }, () => resolve());
+      }
+    });
+    const storageRemove = (key) => new Promise((resolve) => {
+      if (!hasChromeStorage) {
+        localStorage.removeItem(key);
+        resolve();
+      } else {
+        chrome.storage.local.remove([key], () => resolve());
+      }
+    });
+    const findAvatarImg = () => {
+      const selectors = [
+        ".avatar-upsell .part1 .avatar-thumbnail-upsell img",
+        ".avatar-thumbnail-upsell img",
+        ".avatar-upsell img",
+        ".avatar-card img",
+        "img[src*='avatar']"
+      ];
+      for (const sel of selectors) {
+        const el = document.querySelector(sel);
+        if (el) return el;
+      }
+      return null;
+    };
+
+    // إذا كانت الخلفية محفوظة في storage، قم بتعيينها عند تحميل الصفحة
+    const existingBackground = await storageGet("background");
+    if (existingBackground) {
       const bgStyle = `
             <style id="bgimage" class="texture" type="text/css">
                 .avatar-back {
-                    background-image: url('${localStorage.getItem("background")}') !important;
+                    background-image: url('${existingBackground}') !important;
                     background-size: cover !important;
                     background-position: center center !important;
                 }
                 .avatar-upsell .content {
-                    background-image: url('${localStorage.getItem("background")}') !important;
+                    background-image: url('${existingBackground}') !important;
                     background-size: 100% auto !important;
                     background-position: top !important;
                     background-repeat: no-repeat !important;
@@ -92,7 +133,7 @@ if (site.includes("https://www.roblox.com/my/avatar")) {
 
     const hideButton = document.createElement("button");
     hideButton.id = "hideAvatarButton";
-    hideButton.textContent = "Show Avatar";
+    hideButton.textContent = "Hide Avatar";
     hideButton.className = "custom-button";
 
     // إضافة زر "Delete Modifications"
@@ -117,11 +158,16 @@ if (site.includes("https://www.roblox.com/my/avatar")) {
     saveButton.addEventListener("click", () => {
       const file = fileInput.files[0];
       if (file) {
+        // guard against very large files (10MB)
+        if (file.size > 10 * 1024 * 1024) {
+          alert("Selected image is too large. Please choose a file under 10MB.");
+          return;
+        }
         const reader = new FileReader();
-        reader.onload = (event) => {
+        reader.onload = async (event) => {
           // حذف الخلفية القديمة
-          if (localStorage.getItem("background")) {
-            localStorage.removeItem("background");
+          if (await storageGet("background")) {
+            await storageRemove("background");
           }
 
           // إزالة النمط القديم
@@ -144,7 +190,7 @@ if (site.includes("https://www.roblox.com/my/avatar")) {
                             background-repeat: no-repeat !important;
                         }`;
           document.head.appendChild(newStyle);
-          localStorage.setItem("background", base64Image);
+          await storageSet("background", base64Image);
           fileInput.value = '';
           label.textContent = "Choose File";
         };
@@ -155,43 +201,59 @@ if (site.includes("https://www.roblox.com/my/avatar")) {
     });
 
     // عند النقر على زر إخفاء الصورة
-    hideButton.addEventListener("click", () => {
-      const avatarImg = document.querySelector(".avatar-upsell .part1 .avatar-thumbnail-upsell img");
+    hideButton.addEventListener("click", async () => {
+      const avatarImg = findAvatarImg();
       if (avatarImg) {
         if (avatarImg.style.display === "none") {
           avatarImg.style.display = "";
           hideButton.textContent = "Hide Avatar";
-          localStorage.setItem("hideAvatar", "false");
+          await storageSet("hideAvatar", "false");
         } else {
           avatarImg.style.display = "none";
           hideButton.textContent = "Show Avatar";
-          localStorage.setItem("hideAvatar", "true");
+          await storageSet("hideAvatar", "true");
         }
       }
     });
 
-    // استعادة حالة الإخفاء من localStorage
-    const hideAvatar = localStorage.getItem("hideAvatar");
-    if (hideAvatar === "true") {
-      const avatarImg = document.querySelector(".avatar-upsell .part1 .avatar-thumbnail-upsell img");
+    // استعادة حالة الإخفاء من storage + راقب حتى يظهر العنصر
+    const applyHideState = async () => {
+      const hideAvatar = await storageGet("hideAvatar");
+      const avatarImg = findAvatarImg();
       if (avatarImg) {
-        avatarImg.style.display = "none";
-        hideButton.textContent = "Show Avatar";
+        if (hideAvatar === "true") {
+          avatarImg.style.display = "none";
+          hideButton.textContent = "Show Avatar";
+        } else {
+          avatarImg.style.display = "";
+          hideButton.textContent = "Hide Avatar";
+        }
       }
+    };
+    await applyHideState();
+    if (!findAvatarImg()) {
+      const observer = new MutationObserver(() => {
+        const img = findAvatarImg();
+        if (img) {
+          applyHideState();
+          observer.disconnect();
+        }
+      });
+      observer.observe(document.documentElement, { childList: true, subtree: true });
     }
 
     // عند النقر على زر "Delete Modifications"
-    deleteButton.addEventListener("click", () => {
+    deleteButton.addEventListener("click", async () => {
       // إزالة الأنماط المضافة للخلفية
       const bgStyleElement = document.getElementById("bgimage");
       if (bgStyleElement) bgStyleElement.remove();
 
-      // حذف البيانات من localStorage
-      localStorage.removeItem("background");
-      localStorage.removeItem("hideAvatar");
+      // حذف البيانات من storage
+      await storageRemove("background");
+      await storageRemove("hideAvatar");
 
       // إعادة العناصر المرئية إلى حالتها الأصلية
-      const avatarImg = document.querySelector(".avatar-upsell .part1 .avatar-thumbnail-upsell img");
+      const avatarImg = findAvatarImg();
       if (avatarImg) {
         avatarImg.style.display = "";
       }
