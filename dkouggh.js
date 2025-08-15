@@ -77,6 +77,27 @@ if (site.includes("https://www.roblox.com/my/avatar") || site.includes("https://
       const img = document.getElementById('rbx-bgimage');
       if (img) img.remove();
       document.querySelectorAll('.rbx-bgvideo-container, .rbx-bgoverlay-container').forEach(c => c.classList.remove('rbx-bgvideo-container', 'rbx-bgoverlay-container'));
+      const overlayCss = document.getElementById('rbx-bgoverlay-css');
+      if (overlayCss) overlayCss.remove();
+      const legacyVideoCss = document.getElementById('rbx-bgvideo-css');
+      if (legacyVideoCss) legacyVideoCss.remove();
+    };
+
+    const restoreDefaultBackground = () => {
+      const targets = [];
+      const back = document.querySelector('.avatar-back');
+      if (back) targets.push(back);
+      const upsell = document.querySelector('.avatar-upsell .content');
+      if (upsell) targets.push(upsell);
+      targets.forEach((el) => {
+        el.style.removeProperty('background-image');
+        el.style.removeProperty('background-size');
+        el.style.removeProperty('background-position');
+        el.style.removeProperty('background-repeat');
+        el.style.removeProperty('background');
+        el.style.removeProperty('background-color');
+        el.classList.remove('rbx-bgvideo-container', 'rbx-bgoverlay-container');
+      });
     };
     const applyImageBackground = (dataUrl) => {
       // إزالة النمط القديم
@@ -464,6 +485,7 @@ if (site.includes("https://www.roblox.com/my/avatar") || site.includes("https://
     // عند النقر على زر "Delete Modifications"
     deleteButton.addEventListener("click", async () => {
       clearBackgroundElements();
+      restoreDefaultBackground();
 
       // حذف البيانات من storage
       await storageRemove("background");
@@ -478,6 +500,17 @@ if (site.includes("https://www.roblox.com/my/avatar") || site.includes("https://
 
       // إعادة تعيين نص زر "Hide Avatar"
       hideButton.textContent = "Hide Avatar";
+
+      // Fallback: if background still not restored, reload the page
+      setTimeout(() => {
+        const el = document.querySelector('.avatar-back') || document.querySelector('.avatar-upsell .content');
+        if (el) {
+          const bg = getComputedStyle(el).getPropertyValue('background-image');
+          if (!bg || bg === 'none') {
+            window.location.reload();
+          }
+        }
+      }, 100);
     });
   });
 }
