@@ -7,6 +7,15 @@
     "128": "gay.jpg"
   },
   "permissions": ["storage", "unlimitedStorage"],
+  "host_permissions": [
+    "https://cdn.discordapp.com/*",
+    "https://media.discordapp.net/*",
+    "https://images-ext-2.discordapp.net/*",
+    "https://i.imgur.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "content_scripts": [
     {
       "matches": [

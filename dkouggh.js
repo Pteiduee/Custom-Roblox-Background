@@ -51,14 +51,21 @@ if (site.includes("https://www.roblox.com/my/avatar") || site.includes("https://
       }
       return null;
     };
-    const ensureVideoStyles = () => {
-      if (document.getElementById('rbx-bgvideo-css')) return;
+    const ensureOverlayStyles = () => {
+      if (document.getElementById('rbx-bgoverlay-css')) return;
       const style = document.createElement('style');
-      style.id = 'rbx-bgvideo-css';
+      style.id = 'rbx-bgoverlay-css';
       style.textContent = `
-        .rbx-bgvideo-container { position: relative !important; overflow: hidden !important; }
-        #rbx-bgvideo.rbx-bgvideo-element { position: absolute !important; inset: 0 !important; width: 100% !important; height: 100% !important; object-fit: cover !important; pointer-events: none !important; }
-        .rbx-bgvideo-container > *:not(#rbx-bgvideo) { position: relative; z-index: 1; }
+        .rbx-bgoverlay-container { position: relative !important; overflow: hidden !important; background: none !important; background-color: transparent !important; }
+        #rbx-bgvideo.rbx-bgoverlay-element,
+        #rbx-bgimage.rbx-bgoverlay-element { position: absolute !important; inset: 0 !important; width: 100% !important; height: 100% !important; object-fit: cover !important; pointer-events: none !important; background: none !important; z-index: 0 !important; }
+        .rbx-bgoverlay-container > *:not(#rbx-bgvideo):not(#rbx-bgimage) { position: relative; z-index: 1; }
+        .avatar-back,
+        .avatar-upsell .content { background: none !important; background-color: transparent !important; }
+        .avatar-back::before,
+        .avatar-upsell .content::before,
+        .avatar-back::after,
+        .avatar-upsell .content::after { background: none !important; background-color: transparent !important; pointer-events: none !important; }
       `;
       document.head.appendChild(style);
     };
@@ -67,7 +74,9 @@ if (site.includes("https://www.roblox.com/my/avatar") || site.includes("https://
       if (bgStyleElement) bgStyleElement.remove();
       const video = document.getElementById('rbx-bgvideo');
       if (video) video.remove();
-      document.querySelectorAll('.rbx-bgvideo-container').forEach(c => c.classList.remove('rbx-bgvideo-container'));
+      const img = document.getElementById('rbx-bgimage');
+      if (img) img.remove();
+      document.querySelectorAll('.rbx-bgvideo-container, .rbx-bgoverlay-container').forEach(c => c.classList.remove('rbx-bgvideo-container', 'rbx-bgoverlay-container'));
     };
     const applyImageBackground = (dataUrl) => {
       // إزالة النمط القديم
@@ -76,31 +85,67 @@ if (site.includes("https://www.roblox.com/my/avatar") || site.includes("https://
       // إزالة الفيديو القديم إن وجد
       const oldVideo = document.getElementById('rbx-bgvideo');
       if (oldVideo) oldVideo.remove();
-      document.querySelectorAll('.rbx-bgvideo-container').forEach(c => c.classList.remove('rbx-bgvideo-container'));
+      document.querySelectorAll('.rbx-bgvideo-container, .rbx-bgoverlay-container').forEach(c => c.classList.remove('rbx-bgvideo-container', 'rbx-bgoverlay-container'));
+
+      // Try overlay element approach for more reliability
+      ensureOverlayStyles();
+      const container = findBackgroundContainer();
+      if (container) {
+        container.classList.add('rbx-bgoverlay-container');
+        let imgEl = document.getElementById('rbx-bgimage');
+        if (!imgEl) {
+          imgEl = document.createElement('img');
+          imgEl.id = 'rbx-bgimage';
+          imgEl.className = 'rbx-bgoverlay-element';
+        }
+        imgEl.src = dataUrl;
+        container.prepend(imgEl);
+        return;
+      }
 
       const newStyle = document.createElement("style");
       newStyle.id = "bgimage";
       newStyle.textContent = `
                         .avatar-back {
+                            background: none !important;
+                            background-color: transparent !important;
                             background-image: url('${dataUrl}') !important;
                             background-size: cover !important;
                             background-position: center center !important;
+                            background-repeat: no-repeat !important;
                         }
                         .avatar-upsell .content {
+                            background: none !important;
+                            background-color: transparent !important;
                             background-image: url('${dataUrl}') !important;
-                            background-size: 100% auto !important;
-                            background-position: top !important;
+                            background-size: cover !important;
+                            background-position: center center !important;
                             background-repeat: no-repeat !important;
+                        }
+                        .avatar-back::before,
+                        .avatar-upsell .content::before,
+                        .avatar-back::after,
+                        .avatar-upsell .content::after {
+                            background: none !important;
+                            background-color: transparent !important;
+                            pointer-events: none !important;
                         }`;
       document.head.appendChild(newStyle);
     };
+
+    const preloadImage = (src) => new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(true);
+      img.onerror = () => reject(new Error('Failed to load image'));
+      img.src = src;
+    });
     let videoContainerObserver = null;
     const applyVideoBackground = (dataUrl) => {
-      ensureVideoStyles();
+      ensureOverlayStyles();
       const doInject = () => {
         const container = findBackgroundContainer();
         if (!container) return false;
-        container.classList.add('rbx-bgvideo-container');
+        container.classList.add('rbx-bgoverlay-container');
         const oldStyle = document.getElementById("bgimage");
         if (oldStyle) oldStyle.remove();
         let video = document.getElementById('rbx-bgvideo');
@@ -111,7 +156,7 @@ if (site.includes("https://www.roblox.com/my/avatar") || site.includes("https://
         if (!video) {
           video = document.createElement('video');
           video.id = 'rbx-bgvideo';
-          video.className = 'rbx-bgvideo-element';
+          video.className = 'rbx-bgoverlay-element';
           video.autoplay = true;
           video.muted = true;
           video.loop = true;
@@ -149,21 +194,7 @@ if (site.includes("https://www.roblox.com/my/avatar") || site.includes("https://
       if (existingType === 'video') {
         applyVideoBackground(existingBackground);
       } else {
-        const bgStyle = `
-            <style id="bgimage" class="texture" type="text/css">
-                .avatar-back {
-                    background-image: url('${existingBackground}') !important;
-                    background-size: cover !important;
-                    background-position: center center !important;
-                }
-                .avatar-upsell .content {
-                    background-image: url('${existingBackground}') !important;
-                    background-size: 100% auto !important;
-                    background-position: top !important;
-                    background-repeat: no-repeat !important;
-                }
-            </style>`;
-        document.head.insertAdjacentHTML("beforeend", bgStyle);
+        applyImageBackground(existingBackground);
       }
     }
 
@@ -324,22 +355,66 @@ if (site.includes("https://www.roblox.com/my/avatar") || site.includes("https://
         alert('Invalid URL.');
         return;
       }
-      const lower = trimmed.toLowerCase();
-      const videoExts = [".mp4", ".webm", ".ogg", ".ogv"];
-      const isVideo = videoExts.some(ext => lower.endsWith(ext));
 
-      // إزالة أي خلفية سابقة
+      // Ask background to fetch and convert to data URL to avoid CORS/CSP/CORP
+      const fetchViaBg = () => new Promise((resolve) => {
+        if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) {
+          resolve({ ok: false, error: 'chrome.runtime not available' });
+          return;
+        }
+        chrome.runtime.sendMessage({ type: 'fetchAsDataURL', url: trimmed }, (resp) => {
+          resolve(resp || { ok: false, error: 'no response' });
+        });
+      });
+
+      const resp = await fetchViaBg();
+      if (!resp || !resp.ok) {
+        // Fallback: direct use of URL if background fetch fails
+        console.warn('Background fetch failed:', resp && resp.error);
+        const lower = trimmed.toLowerCase();
+        const videoExts = [".mp4", ".webm", ".ogg", ".ogv"];
+        const isVideoByExt = videoExts.some(ext => lower.endsWith(ext));
+
+        clearBackgroundElements();
+        if (await storageGet("background")) await storageRemove("background");
+        if (await storageGet("backgroundType")) await storageRemove("backgroundType");
+
+        if (isVideoByExt) {
+          applyVideoBackground(trimmed);
+          await storageSet("background", trimmed);
+          await storageSet("backgroundType", "video");
+        } else {
+          applyImageBackground(trimmed);
+          await storageSet("background", trimmed);
+          await storageSet("backgroundType", "image");
+        }
+        return;
+      }
+
+      const dataUrl = resp.dataUrl;
+      const ct = (resp.contentType || '').toLowerCase();
+      const isVideo = ct.startsWith('video/');
+
+      if (!isVideo) {
+        try {
+          await preloadImage(dataUrl);
+        } catch (e) {
+          alert('Failed to load the image. The link may be blocked or invalid.');
+          return;
+        }
+      }
+
       clearBackgroundElements();
       if (await storageGet("background")) await storageRemove("background");
       if (await storageGet("backgroundType")) await storageRemove("backgroundType");
 
       if (isVideo) {
-        applyVideoBackground(trimmed);
-        await storageSet("background", trimmed);
+        applyVideoBackground(dataUrl);
+        await storageSet("background", dataUrl);
         await storageSet("backgroundType", "video");
       } else {
-        applyImageBackground(trimmed);
-        await storageSet("background", trimmed);
+        applyImageBackground(dataUrl);
+        await storageSet("background", dataUrl);
         await storageSet("backgroundType", "image");
       }
     });
