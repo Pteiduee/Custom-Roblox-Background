@@ -1,5 +1,5 @@
 const site = window.location.href;
-if (site.includes("https://www.roblox.com/my/avatar")) {
+if (site.includes("https://www.roblox.com/my/avatar") || site.includes("https://web.roblox.com/my/avatar")) {
   window.addEventListener('DOMContentLoaded', async () => {
     // helpers for storage and DOM
     const hasChromeStorage = typeof chrome !== "undefined" && chrome.storage && chrome.storage.local;
@@ -40,11 +40,116 @@ if (site.includes("https://www.roblox.com/my/avatar")) {
       }
       return null;
     };
+    const findBackgroundContainer = () => {
+      const selectors = [
+        ".avatar-back",
+        ".avatar-upsell .content"
+      ];
+      for (const sel of selectors) {
+        const el = document.querySelector(sel);
+        if (el) return el;
+      }
+      return null;
+    };
+    const ensureVideoStyles = () => {
+      if (document.getElementById('rbx-bgvideo-css')) return;
+      const style = document.createElement('style');
+      style.id = 'rbx-bgvideo-css';
+      style.textContent = `
+        .rbx-bgvideo-container { position: relative !important; overflow: hidden !important; }
+        #rbx-bgvideo.rbx-bgvideo-element { position: absolute !important; inset: 0 !important; width: 100% !important; height: 100% !important; object-fit: cover !important; pointer-events: none !important; }
+        .rbx-bgvideo-container > *:not(#rbx-bgvideo) { position: relative; z-index: 1; }
+      `;
+      document.head.appendChild(style);
+    };
+    const clearBackgroundElements = () => {
+      const bgStyleElement = document.getElementById("bgimage");
+      if (bgStyleElement) bgStyleElement.remove();
+      const video = document.getElementById('rbx-bgvideo');
+      if (video) video.remove();
+      document.querySelectorAll('.rbx-bgvideo-container').forEach(c => c.classList.remove('rbx-bgvideo-container'));
+    };
+    const applyImageBackground = (dataUrl) => {
+      // إزالة النمط القديم
+      const oldStyle = document.getElementById("bgimage");
+      if (oldStyle) oldStyle.remove();
+      // إزالة الفيديو القديم إن وجد
+      const oldVideo = document.getElementById('rbx-bgvideo');
+      if (oldVideo) oldVideo.remove();
+      document.querySelectorAll('.rbx-bgvideo-container').forEach(c => c.classList.remove('rbx-bgvideo-container'));
+
+      const newStyle = document.createElement("style");
+      newStyle.id = "bgimage";
+      newStyle.textContent = `
+                        .avatar-back {
+                            background-image: url('${dataUrl}') !important;
+                            background-size: cover !important;
+                            background-position: center center !important;
+                        }
+                        .avatar-upsell .content {
+                            background-image: url('${dataUrl}') !important;
+                            background-size: 100% auto !important;
+                            background-position: top !important;
+                            background-repeat: no-repeat !important;
+                        }`;
+      document.head.appendChild(newStyle);
+    };
+    let videoContainerObserver = null;
+    const applyVideoBackground = (dataUrl) => {
+      ensureVideoStyles();
+      const doInject = () => {
+        const container = findBackgroundContainer();
+        if (!container) return false;
+        container.classList.add('rbx-bgvideo-container');
+        const oldStyle = document.getElementById("bgimage");
+        if (oldStyle) oldStyle.remove();
+        let video = document.getElementById('rbx-bgvideo');
+        if (video && video.parentElement !== container) {
+          video.remove();
+          video = null;
+        }
+        if (!video) {
+          video = document.createElement('video');
+          video.id = 'rbx-bgvideo';
+          video.className = 'rbx-bgvideo-element';
+          video.autoplay = true;
+          video.muted = true;
+          video.loop = true;
+          video.playsInline = true;
+          video.setAttribute('playsinline', '');
+          video.setAttribute('muted', '');
+          video.setAttribute('autoplay', '');
+          video.setAttribute('loop', '');
+        }
+        video.src = dataUrl;
+        container.prepend(video);
+        // attempt to play; ignore failures
+        if (typeof video.play === 'function') {
+          video.play().catch(() => {});
+        }
+        return true;
+      };
+
+      if (!doInject()) {
+        if (videoContainerObserver) videoContainerObserver.disconnect();
+        videoContainerObserver = new MutationObserver(() => {
+          if (doInject()) {
+            videoContainerObserver.disconnect();
+            videoContainerObserver = null;
+          }
+        });
+        videoContainerObserver.observe(document.documentElement, { childList: true, subtree: true });
+      }
+    };
 
     // إذا كانت الخلفية محفوظة في storage، قم بتعيينها عند تحميل الصفحة
     const existingBackground = await storageGet("background");
-    if (existingBackground) {
-      const bgStyle = `
+    const existingType = (await storageGet("backgroundType")) || (existingBackground ? "image" : null);
+    if (existingBackground && existingType) {
+      if (existingType === 'video') {
+        applyVideoBackground(existingBackground);
+      } else {
+        const bgStyle = `
             <style id="bgimage" class="texture" type="text/css">
                 .avatar-back {
                     background-image: url('${existingBackground}') !important;
@@ -58,7 +163,8 @@ if (site.includes("https://www.roblox.com/my/avatar")) {
                     background-repeat: no-repeat !important;
                 }
             </style>`;
-      document.head.insertAdjacentHTML("beforeend", bgStyle);
+        document.head.insertAdjacentHTML("beforeend", bgStyle);
+      }
     }
 
     // CSS لتصميم الأزرار
@@ -117,7 +223,7 @@ if (site.includes("https://www.roblox.com/my/avatar")) {
 
     const fileInput = document.createElement("input");
     fileInput.type = "file";
-    fileInput.accept = "image/*";
+    fileInput.accept = "image/*,video/*";
     fileInput.id = "backgroundFile";
     fileInput.style.display = "none";
 
@@ -158,45 +264,42 @@ if (site.includes("https://www.roblox.com/my/avatar")) {
     saveButton.addEventListener("click", () => {
       const file = fileInput.files[0];
       if (file) {
-        // guard against very large files (10MB)
-        if (file.size > 10 * 1024 * 1024) {
-          alert("Selected image is too large. Please choose a file under 10MB.");
+        const isVideo = file.type && file.type.startsWith('video/');
+        // guard against large files (10MB images, 25MB videos)
+        const maxSize = isVideo ? 25 * 1024 * 1024 : 10 * 1024 * 1024;
+        if (file.size > maxSize) {
+          alert(isVideo ? "Selected video is too large. Please choose a file under 25MB." : "Selected image is too large. Please choose a file under 10MB.");
           return;
         }
         const reader = new FileReader();
         reader.onload = async (event) => {
-          // حذف الخلفية القديمة
+          const dataUrl = event.target.result;
+
+          // إزالة أي خلفية سابقة
+          clearBackgroundElements();
           if (await storageGet("background")) {
             await storageRemove("background");
           }
+          if (await storageGet("backgroundType")) {
+            await storageRemove("backgroundType");
+          }
 
-          // إزالة النمط القديم
-          const oldStyle = document.getElementById("bgimage");
-          if (oldStyle) oldStyle.remove();
+          if (isVideo) {
+            applyVideoBackground(dataUrl);
+            await storageSet("background", dataUrl);
+            await storageSet("backgroundType", "video");
+          } else {
+            applyImageBackground(dataUrl);
+            await storageSet("background", dataUrl);
+            await storageSet("backgroundType", "image");
+          }
 
-          const base64Image = event.target.result;
-          const newStyle = document.createElement("style");
-          newStyle.id = "bgimage";
-          newStyle.textContent = `
-                        .avatar-back {
-                            background-image: url('${base64Image}') !important;
-                            background-size: cover !important;
-                            background-position: center center !important;
-                        }
-                        .avatar-upsell .content {
-                            background-image: url('${base64Image}') !important;
-                            background-size: 100% auto !important;
-                            background-position: top !important;
-                            background-repeat: no-repeat !important;
-                        }`;
-          document.head.appendChild(newStyle);
-          await storageSet("background", base64Image);
           fileInput.value = '';
           label.textContent = "Choose File";
         };
         reader.readAsDataURL(file);
       } else {
-        alert("need to select an image file or GIF!");
+        alert("need to select an image file, GIF, or video!");
       }
     });
 
@@ -244,12 +347,11 @@ if (site.includes("https://www.roblox.com/my/avatar")) {
 
     // عند النقر على زر "Delete Modifications"
     deleteButton.addEventListener("click", async () => {
-      // إزالة الأنماط المضافة للخلفية
-      const bgStyleElement = document.getElementById("bgimage");
-      if (bgStyleElement) bgStyleElement.remove();
+      clearBackgroundElements();
 
       // حذف البيانات من storage
       await storageRemove("background");
+      await storageRemove("backgroundType");
       await storageRemove("hideAvatar");
 
       // إعادة العناصر المرئية إلى حالتها الأصلية
