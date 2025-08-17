@@ -119,6 +119,9 @@ if (site.includes("https://www.roblox.com/my/avatar") || site.includes("https://
           imgEl.id = 'rbx-bgimage';
           imgEl.className = 'rbx-bgoverlay-element';
         }
+        imgEl.decoding = 'async';
+        imgEl.loading = 'eager';
+        imgEl.crossOrigin = 'anonymous';
         imgEl.src = dataUrl;
         container.prepend(imgEl);
         return;
@@ -156,10 +159,42 @@ if (site.includes("https://www.roblox.com/my/avatar") || site.includes("https://
 
     const preloadImage = (src) => new Promise((resolve, reject) => {
       const img = new Image();
+      img.decoding = 'async';
+      img.loading = 'eager';
+      img.crossOrigin = 'anonymous';
       img.onload = () => resolve(true);
       img.onerror = () => reject(new Error('Failed to load image'));
       img.src = src;
     });
+
+    const waitForBackgroundContainer = (timeoutMs = 8000) => new Promise((resolve) => {
+      const start = Date.now();
+      const tryFind = () => {
+        if (findBackgroundContainer()) return resolve(true);
+        if (Date.now() - start >= timeoutMs) return resolve(false);
+        setTimeout(tryFind, 100);
+      };
+      tryFind();
+    });
+
+    const applyExistingBackgroundWhenReady = async () => {
+      const existingBackground = await storageGet("background");
+      const existingType = (await storageGet("backgroundType")) || (existingBackground ? (existingBackground.startsWith('data:video/') ? "video" : "image") : null);
+      if (!existingBackground || !existingType) return;
+      const run = () => {
+        if (existingType === "video") {
+          applyVideoBackground(existingBackground);
+        } else {
+          applyImageBackground(existingBackground);
+        }
+      };
+      if ("requestIdleCallback" in window) {
+        requestIdleCallback(run, { timeout: 2000 });
+      } else {
+        setTimeout(run, 500);
+      }
+    };
+
     let videoContainerObserver = null;
     const applyVideoBackground = (dataUrl) => {
       ensureOverlayStyles();
@@ -182,10 +217,13 @@ if (site.includes("https://www.roblox.com/my/avatar") || site.includes("https://
           video.muted = true;
           video.loop = true;
           video.playsInline = true;
+          video.preload = 'metadata';
+          video.crossOrigin = 'anonymous';
           video.setAttribute('playsinline', '');
           video.setAttribute('muted', '');
           video.setAttribute('autoplay', '');
           video.setAttribute('loop', '');
+          video.setAttribute('preload', 'metadata');
         }
         video.src = dataUrl;
         container.prepend(video);
@@ -208,16 +246,9 @@ if (site.includes("https://www.roblox.com/my/avatar") || site.includes("https://
       }
     };
 
-    // إذا كانت الخلفية محفوظة في storage، قم بتعيينها عند تحميل الصفحة
-    const existingBackground = await storageGet("background");
-    const existingType = (await storageGet("backgroundType")) || (existingBackground ? "image" : null);
-    if (existingBackground && existingType) {
-      if (existingType === 'video') {
-        applyVideoBackground(existingBackground);
-      } else {
-        applyImageBackground(existingBackground);
-      }
-    }
+    // Apply saved background, but defer to avoid blocking initial load
+    await waitForBackgroundContainer(8000);
+    await applyExistingBackgroundWhenReady();
 
     // CSS لتصميم الأزرار
     const customStyles = document.createElement('style');
@@ -377,7 +408,10 @@ if (site.includes("https://www.roblox.com/my/avatar") || site.includes("https://
         return;
       }
 
-      // Ask background to fetch and convert to data URL to avoid CORS/CSP/CORP
+      const lower = trimmed.toLowerCase();
+      const videoExts = [".mp4", ".webm", ".ogg", ".ogv"];
+      const isVideoByExt = videoExts.some(ext => lower.endsWith(ext));
+
       const fetchViaBg = () => new Promise((resolve) => {
         if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) {
           resolve({ ok: false, error: 'chrome.runtime not available' });
@@ -388,54 +422,61 @@ if (site.includes("https://www.roblox.com/my/avatar") || site.includes("https://
         });
       });
 
-      const resp = await fetchViaBg();
-      if (!resp || !resp.ok) {
-        // Fallback: direct use of URL if background fetch fails
-        console.warn('Background fetch failed:', resp && resp.error);
-        const lower = trimmed.toLowerCase();
-        const videoExts = [".mp4", ".webm", ".ogg", ".ogv"];
-        const isVideoByExt = videoExts.some(ext => lower.endsWith(ext));
-
-        clearBackgroundElements();
-        if (await storageGet("background")) await storageRemove("background");
-        if (await storageGet("backgroundType")) await storageRemove("backgroundType");
-
-        if (isVideoByExt) {
-          applyVideoBackground(trimmed);
-          await storageSet("background", trimmed);
-          await storageSet("backgroundType", "video");
-        } else {
-          applyImageBackground(trimmed);
-          await storageSet("background", trimmed);
-          await storageSet("backgroundType", "image");
+      let finalSrc = trimmed;
+      let useDataUrl = false;
+      if (isVideoByExt) {
+        // Try probing the video quickly; if it errors immediately, fall back
+        try {
+          await new Promise((resolve, reject) => {
+            const probe = document.createElement('video');
+            probe.preload = 'metadata';
+            probe.muted = true;
+            probe.crossOrigin = 'anonymous';
+            probe.src = trimmed;
+            let settled = false;
+            const cleanup = () => {
+              probe.removeAttribute('src');
+              probe.load();
+              probe.remove();
+            };
+            probe.onloadedmetadata = () => { if (!settled) { settled = true; cleanup(); resolve(); } };
+            probe.onerror = () => { if (!settled) { settled = true; cleanup(); reject(new Error('video error')); } };
+            setTimeout(() => { if (!settled) { settled = true; cleanup(); resolve(); } }, 2000);
+          });
+        } catch {
+          useDataUrl = true;
         }
-        return;
+      } else {
+        try {
+          await preloadImage(trimmed);
+        } catch {
+          useDataUrl = true;
+        }
       }
 
-      const dataUrl = resp.dataUrl;
-      const ct = (resp.contentType || '').toLowerCase();
-      const isVideo = ct.startsWith('video/');
-
-      if (!isVideo) {
-        try {
-          await preloadImage(dataUrl);
-        } catch (e) {
-          alert('Failed to load the image. The link may be blocked or invalid.');
+      let resp = null;
+      if (useDataUrl) {
+        resp = await fetchViaBg();
+        if (!resp || !resp.ok) {
+          alert('Failed to fetch the link. The URL may be blocked or invalid.');
           return;
         }
+        finalSrc = resp.dataUrl;
       }
 
       clearBackgroundElements();
       if (await storageGet("background")) await storageRemove("background");
       if (await storageGet("backgroundType")) await storageRemove("backgroundType");
 
-      if (isVideo) {
-        applyVideoBackground(dataUrl);
-        await storageSet("background", dataUrl);
+      const isVideoFinal = finalSrc.startsWith('data:video/') || (resp && resp.contentType && resp.contentType.toLowerCase().startsWith('video/')) || isVideoByExt;
+
+      if (isVideoFinal) {
+        applyVideoBackground(finalSrc);
+        await storageSet("background", finalSrc);
         await storageSet("backgroundType", "video");
       } else {
-        applyImageBackground(dataUrl);
-        await storageSet("background", dataUrl);
+        applyImageBackground(finalSrc);
+        await storageSet("background", finalSrc);
         await storageSet("backgroundType", "image");
       }
     });
